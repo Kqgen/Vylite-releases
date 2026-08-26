@@ -83,8 +83,6 @@ jobs:
           install: mingw-w64-x86_64-gcc
       - run: npm ci
         working-directory: source
-      - run: npm test
-        working-directory: source
       - shell: pwsh
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
@@ -104,6 +102,8 @@ jobs:
             "VYLITENEXT_MEMORY_GUARD_CC=$gcc"
             "VYLITENEXT_MEMORY_GUARD_CC_SHA256=$hash"
           ), [Text.UTF8Encoding]::new($false))
+      - run: npm test
+        working-directory: source
       - run: npm run build
         working-directory: source
       - run: npx electron-builder --win --config electron-builder.release.yml --publish never
