@@ -1,0 +1,138 @@
+name: release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+env:
+  VYLITENEXT_UPDATE_FEED_URL: https://github.com/Kqgen/Vylite-releases/releases/latest/download/
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    env:
+      VYLITENEXT_NETWORK_TWEAK_DIR: ${{ github.workspace }}/NetworkTweak
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - shell: pwsh
+        id: source
+        run: |
+          $message = (git tag -l --format='%(contents:subject)' $env:GITHUB_REF_NAME).Trim()
+          if ($message -notmatch '^source=([0-9a-f]{40})$') { throw "release tag $env:GITHUB_REF_NAME does not name a source commit" }
+          [IO.File]::AppendAllLines($env:GITHUB_OUTPUT, @("sha=$($Matches[1])"), [Text.UTF8Encoding]::new($false))
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: Kqgen/VyliteNext
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          ssh-key: ${{ secrets.VYLITENEXT_SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: Kqgen/NetworkTweak
+          ref: 04b1d3815425d67223dd3082d2ef06d58179227b
+          path: NetworkTweak
+          ssh-key: ${{ secrets.VYLITENEXT_NETWORK_TWEAK_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        id: msys2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - run: npm ci
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VYLITENEXT_UPDATE_FEED_URL)) { throw 'VYLITENEXT_UPDATE_FEED_URL missing' }
+          if ([string]::IsNullOrWhiteSpace($env:MSYS2_LOCATION)) { throw 'MSYS2_LOCATION missing' }
+          if (!(Test-Path -LiteralPath (Join-Path $env:VYLITENEXT_NETWORK_TWEAK_DIR 'src\NetworkTweak.App\NetworkTweak.App.csproj'))) { throw 'NetworkTweak checkout missing' }
+          $version = (node -p "require('./source/package.json').version").Trim()
+          if ("v$version" -cne $env:GITHUB_REF_NAME) { throw "release tag $env:GITHUB_REF_NAME does not match package version $version" }
+          $feed = [Uri]$env:VYLITENEXT_UPDATE_FEED_URL
+          if (!$feed.IsAbsoluteUri -or $feed.Scheme -ne 'https' -or !$feed.IsDefaultPort -or ![string]::IsNullOrEmpty($feed.UserInfo) -or $feed.IsLoopback) { throw 'VYLITENEXT_UPDATE_FEED_URL must be public HTTPS' }
+          $gcc = Join-Path $env:MSYS2_LOCATION 'mingw64\bin\gcc.exe'
+          if (!(Test-Path -LiteralPath $gcc)) { throw 'gcc.exe missing' }
+          $version = (& $gcc -dumpfullversion).Trim()
+          if ($version -ne '15.2.0') { throw "gcc version mismatch: $version" }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $gcc).Hash
+          [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
+            "VYLITENEXT_MEMORY_GUARD_CC=$gcc"
+            "VYLITENEXT_MEMORY_GUARD_CC_SHA256=$hash"
+          ), [Text.UTF8Encoding]::new($false))
+      - run: npm run build
+        working-directory: source
+      - run: npx electron-builder --win --config electron-builder.release.yml --publish never
+        working-directory: source
+      - run: node tools/verify-electron-fuses.mjs
+        working-directory: source
+      - shell: pwsh
+        id: release_artifacts
+        working-directory: source
+        run: |
+          $validationJson = node tools/verify-release-artifacts.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'release artifact verification failed' }
+          $validation = $validationJson | ConvertFrom-Json
+          $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { throw 'package version unavailable' }
+          $names = @(
+            "Vylite-Setup-$version.exe"
+            "Vylite-Portable-$version.exe"
+            "Vylite-Setup-$version.exe.blockmap"
+            'latest.yml'
+          )
+          $validatedNames = @($validation.publicationFiles)
+          if ($validatedNames.Count -ne $names.Count) { throw 'publication file count mismatch' }
+          for ($index = 0; $index -lt $names.Count; $index++) {
+            if ($validatedNames[$index] -cne $names[$index]) { throw 'publication file name mismatch' }
+          }
+          [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
+            "RELEASE_SETUP_PATH=release/$($names[0])"
+            "RELEASE_PORTABLE_PATH=release/$($names[1])"
+            "RELEASE_BLOCKMAP_PATH=release/$($names[2])"
+            "RELEASE_METADATA_PATH=release/$($names[3])"
+          ), [Text.UTF8Encoding]::new($false))
+          [IO.File]::AppendAllLines($env:GITHUB_OUTPUT, @(
+            "setup_path=source/release/$($names[0])"
+            "portable_path=source/release/$($names[1])"
+            "blockmap_path=source/release/$($names[2])"
+            "metadata_path=source/release/$($names[3])"
+          ), [Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Vylite-windows
+          path: |
+            ${{ steps.release_artifacts.outputs.setup_path }}
+            ${{ steps.release_artifacts.outputs.portable_path }}
+            ${{ steps.release_artifacts.outputs.blockmap_path }}
+            ${{ steps.release_artifacts.outputs.metadata_path }}
+      - shell: pwsh
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            (Get-Item -LiteralPath $env:RELEASE_SETUP_PATH).FullName
+            (Get-Item -LiteralPath $env:RELEASE_PORTABLE_PATH).FullName
+            (Get-Item -LiteralPath $env:RELEASE_BLOCKMAP_PATH).FullName
+            (Get-Item -LiteralPath $env:RELEASE_METADATA_PATH).FullName
+          )
+          gh release create $env:GITHUB_REF_NAME $assets --repo $env:GITHUB_REPOSITORY --verify-tag --title $env:GITHUB_REF_NAME
