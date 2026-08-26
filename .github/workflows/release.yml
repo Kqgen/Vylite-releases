@@ -1,9 +1,9 @@
 name: release
 
 on:
-  push:
-    tags:
-      - v*
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
 
 permissions:
   contents: write
@@ -12,25 +12,52 @@ env:
   VYLITENEXT_UPDATE_FEED_URL: https://github.com/Kqgen/Vylite-releases/releases/latest/download/
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      sha: ${{ steps.pick.outputs.sha }}
+      build: ${{ steps.pick.outputs.build }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: Kqgen/VyliteNext
+          ssh-key: ${{ secrets.VYLITENEXT_SOURCE_DEPLOY_KEY }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$tag" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha="$(git rev-parse "${tag}^{commit}")"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            build=false
+          else
+            build=true
+          fi
+          {
+            echo "tag=$tag"
+            echo "sha=$sha"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: detect
+    if: needs.detect.outputs.build == 'true'
     runs-on: windows-2025
     env:
       VYLITENEXT_NETWORK_TWEAK_DIR: ${{ github.workspace }}/NetworkTweak
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - shell: pwsh
-        id: source
-        run: |
-          $message = (git tag -l --format='%(contents:subject)' $env:GITHUB_REF_NAME).Trim()
-          if ($message -notmatch '^source=([0-9a-f]{40})$') { throw "release tag $env:GITHUB_REF_NAME does not name a source commit" }
-          [IO.File]::AppendAllLines($env:GITHUB_OUTPUT, @("sha=$($Matches[1])"), [Text.UTF8Encoding]::new($false))
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
           repository: Kqgen/VyliteNext
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ needs.detect.outputs.sha }}
           path: source
           ssh-key: ${{ secrets.VYLITENEXT_SOURCE_DEPLOY_KEY }}
           persist-credentials: false
@@ -61,18 +88,17 @@ jobs:
       - shell: pwsh
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VYLITENEXT_UPDATE_FEED_URL)) { throw 'VYLITENEXT_UPDATE_FEED_URL missing' }
           if ([string]::IsNullOrWhiteSpace($env:MSYS2_LOCATION)) { throw 'MSYS2_LOCATION missing' }
           if (!(Test-Path -LiteralPath (Join-Path $env:VYLITENEXT_NETWORK_TWEAK_DIR 'src\NetworkTweak.App\NetworkTweak.App.csproj'))) { throw 'NetworkTweak checkout missing' }
           $version = (node -p "require('./source/package.json').version").Trim()
-          if ("v$version" -cne $env:GITHUB_REF_NAME) { throw "release tag $env:GITHUB_REF_NAME does not match package version $version" }
+          if ("v$version" -cne $env:RELEASE_TAG) { throw "release tag $env:RELEASE_TAG does not match package version $version" }
           $feed = [Uri]$env:VYLITENEXT_UPDATE_FEED_URL
           if (!$feed.IsAbsoluteUri -or $feed.Scheme -ne 'https' -or !$feed.IsDefaultPort -or ![string]::IsNullOrEmpty($feed.UserInfo) -or $feed.IsLoopback) { throw 'VYLITENEXT_UPDATE_FEED_URL must be public HTTPS' }
           $gcc = Join-Path $env:MSYS2_LOCATION 'mingw64\bin\gcc.exe'
           if (!(Test-Path -LiteralPath $gcc)) { throw 'gcc.exe missing' }
-          $version = (& $gcc -dumpfullversion).Trim()
-          if ($version -ne '15.2.0') { throw "gcc version mismatch: $version" }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $gcc).Hash
           [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
             "VYLITENEXT_MEMORY_GUARD_CC=$gcc"
@@ -105,29 +131,16 @@ jobs:
             if ($validatedNames[$index] -cne $names[$index]) { throw 'publication file name mismatch' }
           }
           [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
-            "RELEASE_SETUP_PATH=release/$($names[0])"
-            "RELEASE_PORTABLE_PATH=release/$($names[1])"
-            "RELEASE_BLOCKMAP_PATH=release/$($names[2])"
-            "RELEASE_METADATA_PATH=release/$($names[3])"
+            "RELEASE_SETUP_PATH=source/release/$($names[0])"
+            "RELEASE_PORTABLE_PATH=source/release/$($names[1])"
+            "RELEASE_BLOCKMAP_PATH=source/release/$($names[2])"
+            "RELEASE_METADATA_PATH=source/release/$($names[3])"
           ), [Text.UTF8Encoding]::new($false))
-          [IO.File]::AppendAllLines($env:GITHUB_OUTPUT, @(
-            "setup_path=source/release/$($names[0])"
-            "portable_path=source/release/$($names[1])"
-            "blockmap_path=source/release/$($names[2])"
-            "metadata_path=source/release/$($names[3])"
-          ), [Text.UTF8Encoding]::new($false))
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: Vylite-windows
-          path: |
-            ${{ steps.release_artifacts.outputs.setup_path }}
-            ${{ steps.release_artifacts.outputs.portable_path }}
-            ${{ steps.release_artifacts.outputs.blockmap_path }}
-            ${{ steps.release_artifacts.outputs.metadata_path }}
       - shell: pwsh
-        working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
+          SOURCE_SHA: ${{ needs.detect.outputs.sha }}
         run: |
           $assets = @(
             (Get-Item -LiteralPath $env:RELEASE_SETUP_PATH).FullName
@@ -135,4 +148,4 @@ jobs:
             (Get-Item -LiteralPath $env:RELEASE_BLOCKMAP_PATH).FullName
             (Get-Item -LiteralPath $env:RELEASE_METADATA_PATH).FullName
           )
-          gh release create $env:GITHUB_REF_NAME $assets --repo $env:GITHUB_REPOSITORY --verify-tag --title $env:GITHUB_REF_NAME
+          gh release create $env:RELEASE_TAG $assets --repo $env:GITHUB_REPOSITORY --target main --title $env:RELEASE_TAG --notes "Automated build of Kqgen/VyliteNext@$env:SOURCE_SHA"
