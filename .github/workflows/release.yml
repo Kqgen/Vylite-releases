@@ -98,10 +98,10 @@ jobs:
           $gcc = Join-Path $env:MSYS2_LOCATION 'mingw64\bin\gcc.exe'
           if (!(Test-Path -LiteralPath $gcc)) { throw 'gcc.exe missing' }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $gcc).Hash
-          [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
+          @(
             "VYLITENEXT_MEMORY_GUARD_CC=$gcc"
             "VYLITENEXT_MEMORY_GUARD_CC_SHA256=$hash"
-          ), [Text.UTF8Encoding]::new($false))
+          ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
       - run: npm test
         working-directory: source
       - run: npm run build
@@ -130,12 +130,12 @@ jobs:
           for ($index = 0; $index -lt $names.Count; $index++) {
             if ($validatedNames[$index] -cne $names[$index]) { throw 'publication file name mismatch' }
           }
-          [IO.File]::AppendAllLines($env:GITHUB_ENV, @(
+          @(
             "RELEASE_SETUP_PATH=source/release/$($names[0])"
             "RELEASE_PORTABLE_PATH=source/release/$($names[1])"
             "RELEASE_BLOCKMAP_PATH=source/release/$($names[2])"
             "RELEASE_METADATA_PATH=source/release/$($names[3])"
-          ), [Text.UTF8Encoding]::new($false))
+          ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
       - shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
