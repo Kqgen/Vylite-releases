@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: Kqgen/NetworkTweak
-          ref: d86844f6913a00a609b4511085a4a8d40507b16c
+          ref: afaed3cda24b42d5d2d14fe8c4fbcc21fc80d546
           path: NetworkTweak
           ssh-key: ${{ secrets.VYLITENEXT_NETWORK_TWEAK_DEPLOY_KEY }}
           persist-credentials: false
