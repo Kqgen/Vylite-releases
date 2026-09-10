@@ -1,8 +1,9 @@
 # Vylite releases
 
-Public distribution point for [Vylite](https://github.com/Kqgen/VyliteNext) installers and the auto-update feed.
+Public distribution point for [Vylite](https://github.com/Kqgen/VyliteNext).
 
-- Installer: `Vylite-Setup-<version>.exe` (portable build: `Vylite-Portable-<version>.exe`)
-- Update feed: `https://github.com/Kqgen/Vylite-releases/releases/latest/download/latest.yml`
+Download `Vylite-Setup-<version>.exe` and install it. That is the only file a person needs.
+
+`latest.yml` is the in-app updater catalog. The installed app fetches it; do not download it by hand.
 
 Releases are produced by the `release` workflow in this repository whenever a `v*` tag is relayed from the source repository. The tag message names the exact source commit that was built.

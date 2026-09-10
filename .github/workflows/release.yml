@@ -121,8 +121,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'package version unavailable' }
           $names = @(
             "Vylite-Setup-$version.exe"
-            "Vylite-Portable-$version.exe"
-            "Vylite-Setup-$version.exe.blockmap"
             'latest.yml'
           )
           $validatedNames = @($validation.publicationFiles)
@@ -132,9 +130,7 @@ jobs:
           }
           @(
             "RELEASE_SETUP_PATH=source/release/$($names[0])"
-            "RELEASE_PORTABLE_PATH=source/release/$($names[1])"
-            "RELEASE_BLOCKMAP_PATH=source/release/$($names[2])"
-            "RELEASE_METADATA_PATH=source/release/$($names[3])"
+            "RELEASE_METADATA_PATH=source/release/$($names[1])"
           ) | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
       - shell: pwsh
         env:
@@ -144,8 +140,6 @@ jobs:
         run: |
           $assets = @(
             (Get-Item -LiteralPath $env:RELEASE_SETUP_PATH).FullName
-            (Get-Item -LiteralPath $env:RELEASE_PORTABLE_PATH).FullName
-            (Get-Item -LiteralPath $env:RELEASE_BLOCKMAP_PATH).FullName
             (Get-Item -LiteralPath $env:RELEASE_METADATA_PATH).FullName
           )
           gh release create $env:RELEASE_TAG $assets --repo $env:GITHUB_REPOSITORY --target main --title $env:RELEASE_TAG --notes "Automated build of Kqgen/VyliteNext@$env:SOURCE_SHA"
